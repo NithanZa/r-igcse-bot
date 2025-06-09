@@ -31,12 +31,12 @@ export default class StickMessageCommand extends BaseCommand {
 	) {
 		if (!interaction.channel) return;
 
+		await interaction.deferReply({ephemeral: true})
+
 		const oldRes = await StickyPinnedMessage.findOne({
 			channelId: interaction.channel.id,
 		});
 		
-		const oldResData = oldRes?.toObject();
-
 		if (oldRes) {
 			const yesButton = new ButtonBuilder()
 							.setCustomId("yes")
@@ -48,7 +48,7 @@ export default class StickMessageCommand extends BaseCommand {
 				.setStyle(ButtonStyle.Danger);
 
 			if (oldRes.messageId !== interaction.targetMessage.id) {
-				const response = await interaction.reply({
+				const response = await interaction.editReply({
 					content: `Override old sticky pin? https://discord.com/channels/${interaction.guildId}/${oldRes.channelId}/${oldRes.messageId}`,
 					components: [
 						new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -56,7 +56,6 @@ export default class StickMessageCommand extends BaseCommand {
 							noButton,
 						),
 					],
-					ephemeral: true,
 				});
 
 				const confirmation = await response.awaitMessageComponent({
@@ -69,12 +68,11 @@ export default class StickMessageCommand extends BaseCommand {
 						components: [],
 					});
 					return;
-				} else if (confirmation.customId === "yes") {
-					await oldRes.deleteOne();
-					await interaction.deleteReply();
+				} else if (confirmation.customId !== "yes") {
+					return;
 				}
 			} else {
-				const response = await interaction.reply({
+				const response = await interaction.editReply({
 					content: `This message is already sticky pinned. Would you like to remove it as a sticky pin (while still keeping it as a regular pin)?`,
 					components: [
 						new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -82,7 +80,6 @@ export default class StickMessageCommand extends BaseCommand {
 							noButton,
 						),
 					],
-					ephemeral: true,
 				});
 
 				const confirmation = await response.awaitMessageComponent({
@@ -105,20 +102,23 @@ export default class StickMessageCommand extends BaseCommand {
 			}
 		}
 
-		const res = await StickyPinnedMessage.create({
-			channelId: interaction.channel.id,
-			messageId: interaction.targetMessage.id,
-		});
+		const res = await StickyPinnedMessage.updateOne(
+			{
+			  channelId: interaction.channel.id,
+			},
+			{
+			  $set: {
+				messageId: interaction.targetMessage.id,
+			  },
+			},
+			{ upsert: true }
+		  );
 
 		if (!res) {
 			interaction.followUp({
 				content: "Failed to create sticky pinned message.",
 				ephemeral: true,
 			});
-
-			if (oldRes) {
-				await StickyPinnedMessage.create(oldResData);
-			}
 			return;
 		}
 
@@ -130,9 +130,12 @@ export default class StickMessageCommand extends BaseCommand {
 			interaction.targetMessage.reply({
 				content: `Messaged sticky pinned by ${interaction.user}`,
 			});
+			interaction.editReply({
+				content: "Successfully sticky pinned message.",
+				components: [],
+			});
 		} catch (error) {
-			res.deleteOne();
-
+			await StickyPinnedMessage.deleteOne({ channelId: interaction.channel.id });
 			const pinnedMessages = (
 				await interaction.channel.messages.fetchPinned()
 			).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
@@ -179,24 +182,24 @@ export default class StickMessageCommand extends BaseCommand {
 					interaction.targetMessage.reply({
 						content: `Messaged sticky pinned by ${interaction.user}`,
 					});
-					interaction.reply({
+					interaction.editReply({
 						content: "Successfully sticky pinned message.",
-						ephemeral: true,
+						components: [],
 					});
 					return;
 				} catch {
-					interaction.reply({
+					interaction.editReply({
 						content:
 							"Heads up! We've hit the pin limit for this channel. You can unpin some previously pinned messages to free up space.",
-						ephemeral: true,
+						components: [],
 					});
 					return;
 				}
 			}
 
-			interaction.reply({
+			interaction.editReply({
 				content: "Couldn't pin message.",
-				ephemeral: true,
+				components: [],
 			});
 
 			client.log(
